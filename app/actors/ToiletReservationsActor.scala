@@ -2,25 +2,31 @@ package actors
 
 import akka.actor.{Actor, ActorRef, Props, Terminated}
 
+import scala.collection.mutable.ListBuffer
+
 /**
   * Created by cuitao on 2017/1/8.
   */
 class ToiletReservationsActor extends Actor {
   var actorUserMap: Map[ActorRef, String] = Map[ActorRef, String]()
   var userActorMap: Map[String, ActorRef] = Map[String, ActorRef]()
-  var queue: Set[String] = Set[String]()
+  var queue: ListBuffer[String] = ListBuffer[String]()
   val slackActorRef: ActorRef = context.actorOf(Props[SlackActor])
 
   override def receive: Receive = {
     case ToiletReservationsActor.Login(username) =>
       attachClientSender(sender(), username)
-      sendQueueTo(sender(), queue)
+      sendQueueTo(sender(), queue.toList)
     case ToiletReservationsActor.Reserve =>
-      procQueue(sender())((username, queue) => queue + username)(sendQueueToAll)
+      procQueue(sender())((username, queue) => if(!queue.contains(username)){
+        queue :+ username
+      }else{
+        queue
+      }  )(sendQueueToAll)
     case ToiletReservationsActor.ReservationCancel =>
-      procQueue(sender())((username, queue) => queue - username)(sendQueueToAll)
+      procQueue(sender())((username, queue) => queue - username )(sendQueueToAll)
     case ToiletReservationsActor.Complete =>
-      procQueue(sender())((username, queue) => queue - username)(queue => {
+      procQueue(sender())((username, queue) => queue - username )(queue => {
         sendQueueToAll(queue)
         if(queue.nonEmpty)
           slackActorRef ! queue.head
@@ -28,12 +34,12 @@ class ToiletReservationsActor extends Actor {
     case Terminated(ref) => detachClientSender(ref)
   }
 
-  def procQueue(sender: ActorRef)(makeQueue: (String, Set[String]) => Set[String])(proc: Set[String] => Unit): Unit = {
+  def procQueue(sender: ActorRef)(makeQueue: (String, ListBuffer[String]) => ListBuffer[String])(proc: List[String] => Unit): Unit = {
     actorUserMap.get(sender).foreach(username => {
       val tmp = makeQueue(username, queue)
       if(tmp != queue) {
         queue = tmp
-        proc(tmp)
+        proc(tmp.toList)
       }
     })
   }
@@ -53,9 +59,9 @@ class ToiletReservationsActor extends Actor {
     context.unwatch(sender)
   }
 
-  def sendQueueTo(actorRef: ActorRef, queue: Set[String]): Unit = actorRef ! ToiletReservationsActor.QueueUpdate(queue)
+  def sendQueueTo(actorRef: ActorRef, queue: List[String]): Unit = actorRef ! ToiletReservationsActor.QueueUpdate(queue)
 
-  def sendQueueToAll(queue: Set[String]): Unit = userActorMap.values.foreach(ref => sendQueueTo(ref, queue))
+  def sendQueueToAll(queue: List[String]): Unit = userActorMap.values.foreach(ref => sendQueueTo(ref, queue))
 }
 
 object ToiletReservationsActor {
@@ -69,6 +75,6 @@ object ToiletReservationsActor {
   object Complete
 
   //  case class CurrentUserUpdate(username: String)
-  case class QueueUpdate(queue: Set[String])
+  case class QueueUpdate(queue: List[String])
 
 }
